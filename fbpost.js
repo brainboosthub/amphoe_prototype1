@@ -2,7 +2,7 @@
   'use strict';
 
   const API_URL = 'https://script.google.com/macros/s/AKfycbxFq4haAxXGYT2sVc2cU9OjO-XtqyezvkZB1NxcDJTqpgQS5V2QM_De5BYEWyScQztiXg/exec?mode=facebook';
-  const PAGE_SIZE = 4;
+  const PAGE_SIZE = 8;
   const state = { items: [], filteredItems: [], page: 0 };
 
   const esc = value => String(value ?? '')
