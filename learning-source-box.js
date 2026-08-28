@@ -1,325 +1,253 @@
 (() => {
   'use strict';
 
-const WEB_APP_URL =
-  'https://script.google.com/macros/s/AKfycbxFq4haAxXGYT2sVc2cU9OjO-XtqyezvkZB1NxcDJTqpgQS5V2QM_De5BYEWyScQztiXg/exec';
+  /*
+   * lsb-box บน index.html ใช้ฐานข้อมูลแหล่งเรียนรู้เพียง Spreadsheet เดียว
+   * โดยส่ง spreadsheetId ไปกับทุกคำขอ เพื่อไม่อ่านรายการ ID จากชีต "แหล่งเรียนรู้"
+   */
+  const LEARNING_SOURCE_WEB_APP_URL =
+    'https://script.google.com/macros/s/AKfycbxFq4haAxXGYT2sVc2cU9OjO-XtqyezvkZB1NxcDJTqpgQS5V2QM_De5BYEWyScQztiXg/exec';
 
-  const INITIAL_ITEMS = 8;
+  const LEARNING_SOURCE_SPREADSHEET_ID =
+    '1r8-EbhvqbOQt0gWJgdo4aQjzv7ZuwQszg6v7Cc85yyo';
+
+  let sources = [];
+  let pageIndex = 0;
+  let cardsPerPage = 2;
+  let pageCount = 0;
+  let timer = null;
+  let controlsBound = false;
+
   const $ = id => document.getElementById(id);
-  let allLearningAreas = [];
+  const esc = value => String(value ?? '')
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'",'&#039;');
+  const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const formatNumber = value => number(value).toLocaleString('th-TH');
 
-const esc = value =>
-  String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-
-  const num = value => {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
-  };
-
-  const formatNumber = value =>
-    num(value).toLocaleString('th-TH');
-
-  const ratingNumber = area => {
-    const raw = area?.rating ??
-      area?.Rating ??
-      area?.score ??
-      area?.satisfactionRating ??
-      area?.satisfaction_score ??
-      area?.[4] ??
-      0;
-
-    const parsed = parseFloat(
-      String(raw ?? 0).replaceAll(',', '').trim()
-    );
-
-    return Number.isFinite(parsed) ? parsed : 0;
-  };
-
-  function bindAreaCards(grid) {
-    const openArea = card => {
-      const areaName = card.dataset.areaName;
-      if (!areaName) return;
-
-      const url = new URL('learning.html', window.location.href);
-      url.searchParams.set('area', areaName);
-      window.open(url.href, '_blank', 'noopener,noreferrer');
-    };
-
-    grid.querySelectorAll('[data-area-sheet]').forEach(card => {
-      card.addEventListener('click', () => openArea(card));
-      card.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        openArea(card);
-      });
-    });
+  function showBoxError(message) {
+    const mapStage = $('lsbMapStage');
+    const track = $('lsbTrack');
+    console.error('Learning Source Box:', message);
+    if (mapStage) mapStage.innerHTML = `<div class="lsb-loading">โหลดแผนที่ไม่สำเร็จ: ${esc(message)}</div>`;
+    if (track) track.innerHTML = `<div class="lsb-loading">โหลดรายการไม่สำเร็จ: ${esc(message)}</div>`;
   }
 
-  function renderLearningAreas(showAll) {
-    const grid = $('lsbAreaGrid');
-    const wrap = $('lsbShowAllWrap');
-    if (!grid) return;
-
-    const displayAreas = showAll
-      ? allLearningAreas
-      : allLearningAreas.slice(0, INITIAL_ITEMS);
-
-    grid.innerHTML = displayAreas.map(area => areaCard(area)).join('');
-    bindAreaCards(grid);
-
-    if (wrap) {
-      wrap.hidden = showAll || allLearningAreas.length <= INITIAL_ITEMS;
-    }
-  }
-
-
-  /* ============================
-     รับข้อมูลจาก Apps Script
-  ============================ */
-
-  window.receiveLearningAreas = function(result) {
-
+  window.receiveLearningSourceBox = function(result) {
     clearTimeout(window.lsbLoadTimer);
 
-    const grid = $('lsbAreaGrid');
-
-    if (!grid) return;
-
     if (!result || result.success !== true) {
-
-      console.error(
-        'Learning areas:',
-        result
-      );
-
-      grid.innerHTML = `
-        <div class="lsb-loading">
-          ไม่สามารถโหลดข้อมูลได้
-        </div>
-      `;
-
+      showBoxError(result && result.message ? result.message : 'ข้อมูลที่ได้รับไม่ถูกต้อง');
       return;
     }
 
+    const settings = result.settings || result.data?.settings || {};
+    const rawSources = result.sources || result.data?.sources || [];
 
-    const areas =
-      Array.isArray(result.areas)
-        ? result.areas
-        : [];
+    sources = (Array.isArray(rawSources) ? rawSources : []).filter(item =>
+      String(item.status || 'block').toLowerCase() === 'block'
+    );
 
+    renderMap(settings);
+    renderCards();
+    bindControls();
+    startAutoSlide();
 
-    if (!areas.length) {
-
-      grid.innerHTML = `
-        <div class="lsb-loading">
-          ยังไม่มีรายการแหล่งเรียนรู้
-        </div>
-      `;
-
-      return;
-    }
-
-
-    // เรียง rating (คอลัมน์ E) จากมากไปน้อย และคงลำดับเดิมเมื่อคะแนนเท่ากัน
-    allLearningAreas = areas
-      .map((area, index) => ({ area, index }))
-      .sort((a, b) =>
-        ratingNumber(b.area) - ratingNumber(a.area) || a.index - b.index
-      )
-      .map(item => item.area);
-
-    renderLearningAreas(false);
-
+    document.getElementById('lsbJsonpScript')?.remove();
   };
 
+  function loadLearningSourceBox() {
+    const mapStage = $('lsbMapStage');
+    const track = $('lsbTrack');
+    if (!mapStage || !track) return;
 
-  /* ============================
-     สร้างการ์ดตำบล
-  ============================ */
+    document.getElementById('lsbJsonpScript')?.remove();
+    clearTimeout(window.lsbLoadTimer);
 
-function areaCard(area) {
+    window.lsbLoadTimer = setTimeout(() => {
+      showBoxError('หมดเวลารอข้อมูลจาก Google Apps Script');
+    }, 30000);
 
-  const name =
-    area.name || '-';
-
-  const spreadsheetId =
-    area.spreadsheetId || '';
-
-  const mapImage =
-    area.mapImage || '';
-
-  const sourceCount =
-    num(area.sourceCount);
-
-  const rating =
-    ratingNumber(area);
-
-
-  return `
-    <article
-      class="lsb-area-card"
-      data-area-sheet="${esc(spreadsheetId)}"
-      data-area-name="${esc(name)}"
-      tabindex="0"
-      role="button"
-    >
-
-      <div class="lsb-area-image">
-
-        ${
-          mapImage
-            ? `
-              <img
-                src="${esc(mapImage)}"
-                alt="${esc(name)}"
-                loading="lazy"
-              >
-            `
-            : `
-              <div class="lsb-no-map">
-                ไม่มีภาพแผนที่
-              </div>
-            `
-        }
-
-      </div>
-
-      <div class="lsb-area-info">
-
-        <div class="lsb-area-title-row">
-          <h3>
-            ${esc(name)}
-          </h3>
-
-          <div class="lsb-area-rating" aria-label="คะแนนความพึงพอใจ ${formatNumber(rating)}">
-            <span aria-hidden="true">★</span>
-            <strong>${formatNumber(rating)}</strong>
-          </div>
-        </div>
-
-        <div class="lsb-area-stat">
-          จำนวนแหล่งเรียนรู้
-          <strong>
-            ${formatNumber(sourceCount)}
-          </strong>
-        </div>
-
-      </div>
-
-    </article>
-  `;
-}
-
-
-  /* ============================
-     โหลดข้อมูล
-  ============================ */
-
-  function loadLearningAreas() {
-
-    const grid =
-      $('lsbAreaGrid');
-
-    if (!grid) {
-      console.error(
-        'ไม่พบ element #lsbAreaGrid'
-      );
-      return;
-    }
-
-
-    document
-      .getElementById('lsbAreaJsonp')
-      ?.remove();
-
-
-    clearTimeout(
-      window.lsbLoadTimer
-    );
-
-
-    window.lsbLoadTimer =
-      setTimeout(() => {
-
-        grid.innerHTML = `
-          <div class="lsb-loading">
-            หมดเวลารอข้อมูล
-          </div>
-        `;
-
-      }, 30000);
-
-
-    const script =
-      document.createElement('script');
-
-
-    script.id =
-      'lsbAreaJsonp';
-
+    const script = document.createElement('script');
+    script.id = 'lsbJsonpScript';
     script.async = true;
-
-
     script.src =
-      WEB_APP_URL +
-      '?mode=learningAreas' +
-      '&callback=window.receiveLearningAreas' +
-      '&_=' +
-      Date.now();
-
-
-    console.log(
-      'Learning Areas URL:',
-      script.src
-    );
-
+      LEARNING_SOURCE_WEB_APP_URL +
+      '?mode=learningBox' +
+      '&spreadsheetId=' + encodeURIComponent(LEARNING_SOURCE_SPREADSHEET_ID) +
+      '&callback=receiveLearningSourceBox' +
+      '&_=' + Date.now();
 
     script.onerror = () => {
-
-      clearTimeout(
-        window.lsbLoadTimer
-      );
-
-      console.error(
-        'โหลด Learning Areas API ไม่สำเร็จ:',
-        script.src
-      );
-
-      grid.innerHTML = `
-        <div class="lsb-loading">
-          ไม่สามารถเชื่อมต่อข้อมูลได้
-        </div>
-      `;
-
+      clearTimeout(window.lsbLoadTimer);
+      showBoxError('ไม่สามารถโหลด JSONP จาก Google Apps Script');
       script.remove();
-
     };
-
 
     document.body.appendChild(script);
   }
 
-  $('lsbShowAllBtn')?.addEventListener('click', () => {
-    renderLearningAreas(true);
-  });
+  function renderMap(settings) {
+    const mapStage = $('lsbMapStage');
+    if (!mapStage) return;
 
+    const mapImage = String(settings.map_image_url || '').trim();
+    if (!mapImage) {
+      mapStage.innerHTML = '<div class="lsb-loading">ยังไม่ได้กำหนดรูปภาพแผนที่</div>';
+      return;
+    }
 
-  if (document.readyState === 'loading') {
+    mapStage.innerHTML = `
+      <img class="lsb-map-image" src="${esc(mapImage)}" alt="แผนที่แหล่งเรียนรู้"
+        onerror="this.onerror=null;this.src='https://placehold.co/1000x650?text=Map';">
+      <div class="lsb-markers">
+        ${sources.map(source => markerHtml(source)).join('')}
+      </div>`;
 
-    document.addEventListener(
-      'DOMContentLoaded',
-      loadLearningAreas
-    );
-
-  } else {
-
-    loadLearningAreas();
-
+    mapStage.querySelectorAll('[data-lsb-source]').forEach(marker => {
+      marker.addEventListener('click', () => openDetail(marker.dataset.lsbSource));
+    });
   }
 
+  function markerHtml(source) {
+    const x = Math.min(100, Math.max(0, number(source.map_x || 50)));
+    const y = Math.min(100, Math.max(0, number(source.map_y || 50)));
+    const image = String(source.image_url || '').trim() || 'https://placehold.co/320x180?text=No+Image';
+    return `
+      <button class="lsb-marker" type="button" data-lsb-source="${esc(source.id)}"
+        style="left:${x}%;top:${y}%;--lsb-marker:${esc(source.marker_color || '#ef4444')}"
+        aria-label="${esc(source.name || 'แหล่งเรียนรู้')}">
+        <span class="lsb-marker-pin"></span>
+        <span class="lsb-marker-preview">
+          <img src="${esc(image)}" alt="${esc(source.name || '')}"
+            onerror="this.onerror=null;this.src='https://placehold.co/320x180?text=No+Image';">
+          <span class="lsb-marker-preview-body">
+            <strong>${esc(source.name || '-')}</strong>
+            <small>${esc(source.area || source.address || 'ไม่ระบุพื้นที่')}</small>
+          </span>
+        </span>
+      </button>`;
+  }
+
+  function renderCards() {
+    const track = $('lsbTrack');
+    const dots = $('lsbDots');
+    if (!track) return;
+
+    if (!sources.length) {
+      track.innerHTML = '<div class="lsb-empty">ยังไม่มีรายการแหล่งเรียนรู้</div>';
+      if (dots) dots.innerHTML = '';
+      return;
+    }
+
+    track.innerHTML = sources.map(source => cardHtml(source)).join('');
+    track.querySelectorAll('[data-lsb-detail]').forEach(button => {
+      button.addEventListener('click', () => openDetail(button.dataset.lsbDetail));
+    });
+
+    updateResponsiveCount();
+    goToPage(0, false);
+  }
+
+  function cardHtml(source) {
+    const image = String(source.image_url || '').trim() || 'https://placehold.co/600x400?text=No+Image';
+    return `
+      <article class="lsb-card">
+        <div class="lsb-card-image">
+          <img src="${esc(image)}" alt="${esc(source.name || '')}" loading="lazy"
+            onerror="this.onerror=null;this.src='https://placehold.co/600x400?text=No+Image';">
+          <span class="lsb-card-badge">● ${esc(source.category || 'ไม่ระบุประเภท')}</span>
+        </div>
+        <div class="lsb-card-body">
+          <h3>${esc(source.name || '-')}</h3>
+          <div class="lsb-meta">⌖ <span>${esc(source.area || source.address || '-')}</span></div>
+          <div class="lsb-meta">♟ <span>${esc(source.manager || '-')}</span></div>
+          <div class="lsb-card-footer">
+            <span class="lsb-card-stats">★ ${number(source.averageRating).toFixed(1)} · 👁 ${formatNumber(source.views)}</span>
+            <button class="lsb-detail-btn" type="button" data-lsb-detail="${esc(source.id)}">ดูรายละเอียด</button>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  function updateResponsiveCount() {
+    cardsPerPage = window.matchMedia('(max-width:620px)').matches ? 1 : 2;
+    pageCount = Math.max(1, Math.ceil(sources.length / cardsPerPage));
+    if (pageIndex >= pageCount) pageIndex = pageCount - 1;
+    renderDots();
+  }
+
+  function goToPage(index, restart = true) {
+    if (!sources.length) return;
+    pageIndex = (index + pageCount) % pageCount;
+    const track = $('lsbTrack');
+    const card = track?.querySelector('.lsb-card');
+    if (!track || !card) return;
+    const gap = 14;
+    const distance = (card.getBoundingClientRect().width + gap) * cardsPerPage;
+    track.style.transform = `translateX(-${pageIndex * distance}px)`;
+    renderDots();
+    if (restart) startAutoSlide();
+  }
+
+  function renderDots() {
+    const dots = $('lsbDots');
+    if (!dots) return;
+
+    dots.innerHTML = Array.from({length:pageCount}, (_, index) =>
+      `<button class="lsb-dot ${index === pageIndex ? 'active' : ''}" type="button" data-lsb-page="${index}" aria-label="หน้าที่ ${index+1}"></button>`
+    ).join('');
+
+    dots.querySelectorAll('[data-lsb-page]').forEach(button => {
+      button.addEventListener('click', () => goToPage(Number(button.dataset.lsbPage)));
+    });
+
+    const prev = $('lsbPrev');
+    const next = $('lsbNext');
+    if (prev) prev.disabled = sources.length <= cardsPerPage;
+    if (next) next.disabled = sources.length <= cardsPerPage;
+  }
+
+  function bindControls() {
+    if (controlsBound) return;
+    controlsBound = true;
+
+    const prev = $('lsbPrev');
+    const next = $('lsbNext');
+    if (prev) prev.onclick = () => goToPage(pageIndex - 1);
+    if (next) next.onclick = () => goToPage(pageIndex + 1);
+
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const previous = cardsPerPage;
+        updateResponsiveCount();
+        if (previous !== cardsPerPage) goToPage(0, false);
+        else goToPage(pageIndex, false);
+      }, 150);
+    });
+  }
+
+  function startAutoSlide() {
+    clearInterval(timer);
+    if (pageCount <= 1) return;
+    timer = setInterval(() => goToPage(pageIndex + 1, false), 4000);
+  }
+
+  function openDetail(id) {
+    if (!id) return;
+    const url =
+      LEARNING_SOURCE_WEB_APP_URL +
+      '?id=' + encodeURIComponent(id) +
+      '&spreadsheetId=' + encodeURIComponent(LEARNING_SOURCE_SPREADSHEET_ID) +
+      '&source=github';
+    window.open(url, '_blank', 'noopener');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadLearningSourceBox);
+  } else {
+    loadLearningSourceBox();
+  }
 })();
