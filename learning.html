@@ -1204,25 +1204,7 @@ th{background:#f8fafc;font-size:13px;color:#475569;position:sticky;top:0}
     right: 10px;
   }
 }
-.learning-area-selector {
-  margin-left: auto;
-  width: 280px;
-}
-
-.learning-area-selector label {
-  display: block;
-  margin-bottom: 7px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #334155;
-}
-
-.learning-area-selector select {
-  width: 100%;
-  background: #fff;
-  font-weight: 600;
-}
-    .map-heading-row {
+.map-heading-row {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -1244,31 +1226,11 @@ th{background:#f8fafc;font-size:13px;color:#475569;position:sticky;top:0}
   margin: 0;
 }
 
-.learning-area-selector {
-  width: 280px;
-  flex: 0 0 280px;
-  margin: 0;
-}
-
-.learning-area-selector label {
-  display: block;
-  margin-bottom: 7px;
-  font-weight: 600;
-}
-
-.learning-area-selector select {
-  width: 100%;
-}
-    @media (max-width: 700px) {
+@media (max-width: 700px) {
   .map-heading-row {
     flex-direction: column;
     align-items: stretch;
     gap: 14px;
-  }
-
-  .learning-area-selector {
-    width: 100%;
-    flex: none;
   }
 }
     /* ให้ Section แผนที่กว้างเท่ากับ places-filter-bar */
@@ -1356,26 +1318,7 @@ main > .section:first-child {
         คลิกจุดบนแผนที่เพื่อดูรายละเอียด
       </p>
     </div>
-
-    <!-- ฝั่งขวา -->
-    <div class="learning-area-selector">
-      <label for="learningSheetSelect">
-        <i class="fa-solid fa-location-dot"></i>
-        เลือกพื้นที่
-      </label>
-
-      <select
-        id="learningSheetSelect"
-        class="control"
-        onchange="changeLearningSheet()"
-      >
-        <option value="">
-          กำลังโหลดรายการ...
-        </option>
-      </select>
-    </div>
-
-  </div>
+</div>
 
 
   <!-- แผนที่ -->
@@ -1544,7 +1487,8 @@ main > .section:first-child {
   sources: [],
   types: []
 };
-    let currentSpreadsheetId = '';
+    const LEARNING_SPREADSHEET_ID = '1r8-EbhvqbOQt0gWJgdo4aQjzv7ZuwQszg6v7Cc85yyo';
+    let currentSpreadsheetId = LEARNING_SPREADSHEET_ID;
     let filteredSources = [];
     let activeReviewSource = null;
     let activeRating = 0;
@@ -1613,15 +1557,9 @@ let detailSlideCount = 0;
       document.head.appendChild(script);
     }
 
-document.addEventListener("DOMContentLoaded", async () => {
+document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
-
-  try {
-    await loadLearningSheetOptions();
-    loadPublicData();
-  } catch (error) {
-    showError(error);
-  }
+  loadPublicData();
 });
 function bindEvents() {
   ['searchInput', 'areaFilter', 'categoryFilter'].forEach(id => {
@@ -2625,84 +2563,7 @@ function stopDetailSlider() {
     detailSlideTimer = null;
   }
 }
-function loadLearningSheetOptions() {
-  return new Promise((resolve, reject) => {
 
-    const select =
-      document.getElementById('learningSheetSelect');
-
-    select.innerHTML =
-      '<option value="">กำลังโหลดรายการ...</option>';
-
-    jsonpRequest(
-      'learningSheetOptions',
-      {},
-
-      function(result) {
-
-        const items =
-          Array.isArray(result.items)
-            ? result.items
-            : [];
-
-        if (!items.length) {
-          select.innerHTML =
-            '<option value="">ไม่พบรายการ</option>';
-
-          currentSpreadsheetId = '';
-          resolve();
-          return;
-        }
-
-        select.innerHTML = items.map(item => `
-          <option value="${escAttr(item.spreadsheetId)}">
-            ${esc(item.name)}
-          </option>
-        `).join('');
-
-        // URL แสดงเฉพาะชื่อตำบล ไม่แสดง Spreadsheet ID
-        // จากนั้นค้นหา ID ที่ตรงกันจากรายการของ Master Sheet ภายในระบบ
-        const requestedArea = String(
-          new URLSearchParams(window.location.search)
-            .get('area') || ''
-        ).trim();
-
-        const requestedItem = items.find(item =>
-          String(item.name || '').trim() === requestedArea
-        );
-
-        // กด "ดูรายการทั้งหมด" โดยไม่มีพารามิเตอร์ ยังคงใช้ A2/B2 เหมือนเดิม
-        currentSpreadsheetId = requestedItem
-          ? String(requestedItem.spreadsheetId || '').trim()
-          : String(items[0].spreadsheetId || '').trim();
-
-        select.value = currentSpreadsheetId;
-
-        resolve();
-      },
-
-      function(error) {
-        select.innerHTML =
-          '<option value="">โหลดรายการไม่สำเร็จ</option>';
-
-        currentSpreadsheetId = '';
-        reject(error);
-      }
-    );
-  });
-}
-function changeLearningSheet() {
-
-  const select =
-    document.getElementById('learningSheetSelect');
-
-  currentSpreadsheetId =
-    String(select.value || '').trim();
-
-  if (!currentSpreadsheetId) return;
-
-  loadPublicData();
-}
   </script>
 </body>
 </html>
